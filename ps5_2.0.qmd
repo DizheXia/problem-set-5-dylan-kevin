@@ -567,6 +567,73 @@ else:
     print(data.head())
 ```
 
+```{python}
+
+import pandas as pd
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import random
+import time
+import requests
+from bs4 import BeautifulSoup
+
+# User Agent 设置为常量
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+
+def fetch_detail_info(link):
+    """Fetch agency information from detail page with error handling."""
+    try:
+        time.sleep(random.uniform(1, 2))  # Slightly reduced sleep time
+        response = requests.get(link, headers={"User-Agent": USER_AGENT})
+        response.raise_for_status()  # Proper way to handle request errors
+        detail_soup = BeautifulSoup(response.content, 'html.parser')
+        agency_label = detail_soup.find('span', class_='padding-right-2 text-base', text='Agency:')
+        return agency_label.parent.get_text(strip=True).replace("Agency:", "").strip() if agency_label else "N/A"
+    except Exception as e:
+        print(f"Error fetching details for {link}: {e}")
+        return "N/A"
+
+def scrape_enforcement_actions(year, month):
+    base_url = "https://oig.hhs.gov/fraud/enforcement/"
+    df = pd.DataFrame(columns=['Title', 'Date', 'Category', 'Link', 'Agency'])
+    page = 1
+
+    while True:
+        url = f"{base_url}?page={page}&year={year}&month={month}"
+        response = requests.get(url, headers={"User-Agent": USER_AGENT})
+        if response.status_code != 200:
+            break
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        action_entries = soup.find_all('li', class_='usa-card')
+        if not action_entries:
+            break
+
+        # Populate DataFrame directly
+        for entry in action_entries:
+            title = entry.find('h2', class_='usa-card__heading').get_text(strip=True)
+            date = entry.find('span', class_='text-base-dark').get_text(strip=True)
+            category = entry.find('li', class_='display-inline-block').get_text(strip=True)
+            link = base_url + entry.find('a')['href'].strip('/')
+            df = df.append({'Title': title, 'Date': date, 'Category': category, 'Link': link, 'Agency': "N/A"}, ignore_index=True)
+
+        page += 1
+        time.sleep(1)  # Shorter sleep to speed up scraping
+
+    # Concurrently fetch agency information
+    with ThreadPoolExecutor(max_workers=10) as executor:  # Adjusted thread count
+        futures = {executor.submit(fetch_detail_info, link): index for index, link in df['Link'].iteritems()}
+        for future in as_completed(futures):
+            index = futures[future]
+            df.at[index, 'Agency'] = future.result()
+
+    df.to_csv(f"enforcement_actions_{year}_{month:02d}.csv", index=False)
+
+# Example usage
+if __name__ == "__main__":
+    scrape_enforcement_actions(2021, 1)
+
+```
 Number of  enforcement actions: 3525
 
 **The earliest enforcement action it scraped:**
